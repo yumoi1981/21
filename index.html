@@ -582,18 +582,17 @@ function audioInit() {
     const len = AU.ctx.sampleRate * .5, buf = AU.ctx.createBuffer(1, len, AU.ctx.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     AU.noise = buf; AU.next = AU.ctx.currentTime + .1;
-    setInterval(sched, 30);
   } catch (e) { AU.ctx = null; }
 }
 function tone(f, d, type = 'square', v = .12, f2 = 0, delay = 0, dest) {
-  const a = AU.ctx; if (!a) return; const t = a.currentTime + delay;
+  const a = AU.ctx; if (!a || !save.sound) return; const t = a.currentTime + delay;
   const o = a.createOscillator(), g = a.createGain(); o.type = type; o.frequency.setValueAtTime(f, t);
   if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + d);
   g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(.0001, t + d);
   o.connect(g); g.connect(dest || AU.master); o.start(t); o.stop(t + d + .03);
 }
 function noiz(d, v = .2, fq = 1500, delay = 0, dest, hp) {
-  const a = AU.ctx; if (!a) return; const t = a.currentTime + delay;
+  const a = AU.ctx; if (!a || !save.sound) return; const t = a.currentTime + delay;
   const s = a.createBufferSource(); s.buffer = AU.noise; const f = a.createBiquadFilter(); f.type = hp ? 'highpass' : 'lowpass'; f.frequency.value = fq;
   const g = a.createGain(); g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(.0001, t + d);
   s.connect(f); f.connect(g); g.connect(dest || AU.master); s.start(t); s.stop(t + d + .02);
