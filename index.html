@@ -1083,8 +1083,8 @@ function ell(c, x, y, rx, ry, rot = 0) { c.beginPath(); c.ellipse(x, y, rx, ry, 
 function poly(c, pts) { c.beginPath(); c.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) c.lineTo(pts[i], pts[i + 1]); c.closePath(); }
 function quad(a, b, cc, d, fill) { if (!a || !b || !cc || !d) return; ctx.fillStyle = fill; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(cc.x, cc.y); ctx.lineTo(d.x, d.y); ctx.closePath(); ctx.fill(); }
 const GLOW = new Map();
-function glowTex(col) { let t = GLOW.get(col); if (t) return t; t = document.createElement('canvas'); t.width = t.height = 64; const x = t.getContext('2d'), gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); if (GLOW.size > 160) GLOW.clear(); GLOW.set(col, t); return t; }
-function glow(c, x, y, r, col, a = 1) { if (!(isFinite(x) && isFinite(y) && isFinite(r)) || r <= 0.5) return; const ga = c.globalAlpha; c.globalAlpha = ga * a; c.drawImage(glowTex(col), x - r, y - r, r * 2, r * 2); c.globalAlpha = ga; }
+function glowTex(col) { let t = GLOW.get(col); if (t) return t; if (GLOW.size > 300) return null; t = document.createElement('canvas'); t.width = t.height = 64; const x = t.getContext('2d'), gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); GLOW.set(col, t); return t; }
+function glow(c, x, y, r, col, a = 1) { if (!(isFinite(x) && isFinite(y) && isFinite(r)) || r <= 0.5) return; const ga = c.globalAlpha; c.globalAlpha = ga * a; const tx = glowTex(col); if (tx) c.drawImage(tx, x - r, y - r, r * 2, r * 2); c.globalAlpha = ga; }
 function flame(c, x, y, s, t, seed = 0) {
   // ゆらめく炎（x,y が根もと、s が大きさ）
   const f = Math.sin(t * 18 + seed) * .12 + Math.sin(t * 11 + seed * 2) * .08;
@@ -1224,22 +1224,29 @@ function drawKnight(c, x, y, s, o) {
   c.restore();
 }
 const drawRobot = drawKnight;
-const KSPR = new Map(); let ksprKey = '';
-function knightSprite(kind, wl, gold, frame, leader) {
-  const key = `${kind}|${wl}|${gold ? 1 : 0}|${frame}|${leader ? 1 : 0}`; let s = KSPR.get(key); if (s) return s;
-  const S = 46; s = document.createElement('canvas'); s.width = s.height = Math.round(S * 2.4);
-  const c = s.getContext('2d'); drawKnight(c, S * 1.2, S * 2.0, S, { kind, ph: frame / 8 * Math.PI * 2, wl, gold, leader });
-  KSPR.set(key, s); return s;
+const ATLAS = {}; const AS = 40, ACELL = 96, AFR = 4;
+function atlasFor(wl) {
+  let a = ATLAS[wl]; if (a) return a;
+  a = document.createElement('canvas'); a.width = ACELL * AFR; a.height = ACELL * 7;
+  const c = a.getContext('2d');
+  for (let row = 0; row < 7; row++) for (let fr = 0; fr < AFR; fr++) {
+    c.save(); c.beginPath(); c.rect(fr * ACELL, row * ACELL, ACELL, ACELL); c.clip();
+    drawKnight(c, fr * ACELL + ACELL / 2, row * ACELL + AS * 2.0, AS, { kind: row === 6 ? 0 : row, ph: fr / AFR * Math.PI * 2, wl, leader: row === 6 });
+    c.restore();
+  }
+  ATLAS[wl] = a; return a;
 }
 function drawCrowd(r) {
   const fev = r.fever > 0, wl = weaponLv(r);
-  const key = wl + '|' + (fev ? 1 : 0); if (key !== ksprKey) { KSPR.clear(); ksprKey = key; }
+  const at = atlasFor(wl), cw = ACELL / AS;
   const list = r.members.map((m, i) => ({ m, i })).sort((a, b) => b.m.z - a.m.z);
   for (const { m, i } of list) {
     const p = proj(r.crowdX + m.x, 0, r.playerZ + m.z); if (!p) continue;
     const k = p.s * .82 * (i === 0 ? 1.3 : 1) * easeBack(clamp(m.pop, 0, 1)); if (k < .5) continue;
-    const fr = (((m.ph % 6.2832) + 6.2832) % 6.2832) / 6.2832 * 8 | 0, sp = knightSprite(i === 0 ? 0 : m.kind, wl, fev, fr, i === 0);
-    ctx.drawImage(sp, p.x - 1.2 * k, p.y - 2.0 * k, 2.4 * k, 2.4 * k);
+    const fr = (((m.ph % 6.2832) + 6.2832) % 6.2832) / 6.2832 * AFR | 0, row = i === 0 ? 6 : (m.kind % 6);
+    const dw = cw * k, dx = p.x - dw / 2, dy = p.y - 2.0 * k;
+    ctx.drawImage(at, fr * ACELL, row * ACELL, ACELL, ACELL, dx, dy, dw, dw);
+    if (fev) glow(ctx, p.x, p.y - .6 * k, .7 * k, 'rgba(255,215,80,.45)');
     if (m.flash > 0) glow(ctx, p.x + (wl === 1 ? -.33 : .32) * k, p.y - (wl === 1 ? .9 : 1.3) * k, .5 * k, 'rgba(255,250,220,.9)');
   }
   for (const { m, i } of list) { const p = proj(r.crowdX + m.x, 0, r.playerZ + m.z); if (!p) continue; drawKnight(ctx, p.x, p.y, p.s * .82, { kind: i === 0 ? 0 : m.kind, ph: m.ph, pop: m.pop, size: i === 0 ? 1.3 : 1, leader: i === 0, gold: fev, wl, flash: m.flash || 0 }); }
@@ -1651,7 +1658,7 @@ function showScreen(name) {
       <div class="ss">こえが カタコトのときは（おうちのひと むけ）：iPhone・iPadの「せってい」→「アクセシビリティ」→「よみあげコンテンツ」→「こえ」→「日本語」で、「拡張」や「プレミアム」と書いてある声をダウンロードすると、なめらかになります。ダウンロードしたら、ここで「（かくちょう）」や「（プレミアム）」が付いた声を えらんでください。リストに出てこないときは、iPhoneを再起動するか、このページを Safari で開いてください（アプリの中のブラウザでは、ダウンロードした声が使えないことがあります）。</div>
       <div class="sh">きろくの かきだし（おうちのひと むけ）</div><textarea id="exp" readonly>${data}</textarea><button class="sm2" data-act="copy">コピー</button>
       <div class="sh">きろくの よみこみ</div><textarea id="imp" placeholder="ここに はりつけ"></textarea><button class="sm2" data-act="import">よみこむ</button>
-      <div id="setMsg" class="ss"></div><button class="sm2 danger" data-act="reset">きろくを ぜんぶ けす</button><button class="big" data-act="toMap">もどる</button></div>`;
+      <div id="setMsg" class="ss"></div>${save.lastCrash ? `<div class="sh">まえに おちたときの きろく（おうちのひと むけ）</div><div class="ss">${save.lastCrash.when}／${save.lastCrash.w} ${save.lastCrash.s}-${save.lastCrash.q}もんめ／${save.lastCrash.phase === 'boss' ? 'ボスせん' : 'みちのり'}／なかま ${save.lastCrash.n}にん／ぶき Lv${save.lastCrash.wl}${save.lastCrash.fever ? '／FEVER' : ''}／こうか ${save.lastCrash.parts}・たま ${save.lastCrash.bullets}</div>` : ''}<button class="sm2 danger" data-act="reset">きろくを ぜんぶ けす</button><button class="big" data-act="toMap">もどる</button></div>`;
   }
 }
 function hideScreen() { scr.className = ''; scr.innerHTML = ''; }
@@ -1689,6 +1696,12 @@ function startStage(wk, si) {
   bigText(`ステージ ${si + 1}`, '#fff', G.run.st.sub);
 }
 setInterval(() => { const r = G.run; if (r && !r.demo) $('#hProg').style.width = clamp(r.playerZ / (r.bossZ - 4) * 100, 0, 100) + '%'; }, 100);
+
+// 落ちたときの記録（2秒ごとに保存。ふつうに終わったら消す）
+const HBK = 'knightRush_hb';
+try { const prev = JSON.parse(localStorage.getItem(HBK) || 'null'); if (prev && prev.live) { save.lastCrash = prev; persist(); } localStorage.removeItem(HBK); } catch (e) { }
+setInterval(() => { try { const r = G.run; if (!r || r.demo || r.over) { localStorage.removeItem(HBK); return; } localStorage.setItem(HBK, JSON.stringify({ live: 1, when: new Date().toLocaleString('ja-JP'), w: r.W.name, s: r.si + 1, q: r.gi + 1, phase: r.phase, n: r.n, wl: weaponLv(r), fever: r.fever > 0 ? 1 : 0, parts: G.parts.length, bullets: r.bullets.length, atlas: Object.keys(ATLAS).length, glow: GLOW.size })); } catch (e) { } }, 2000);
+addEventListener('pagehide', () => { try { localStorage.removeItem(HBK); } catch (e) { } });
 G.run = makeDemo(); showScreen('title'); requestAnimationFrame(loop);
 document.addEventListener('visibilitychange', () => { if (document.hidden && G.run && !G.run.demo && !G.run.over && !G.paused) { G.paused = true; showScreen('pause'); } });
 
