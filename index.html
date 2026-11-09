@@ -651,10 +651,26 @@ SFX.pon = () => { tone(800, .08, 'square', .1, 1600); noiz(.08, .2, 3000); };
 SFX.shotK = lv => { if (lv === 1) noiz(.07, .08, 3000, 0, null, true); else if (lv === 2) { noiz(.15, .1, 900); tone(220, .12, 'sawtooth', .03, 110); } else if (lv === 3) { tone(2200, .06, 'triangle', .04, 3200); } else if (lv === 4) { noiz(.08, .12, 5000, 0, null, true); tone(800, .06, 'square', .03, 200); } else { tone(1200, .25, 'triangle', .04, 300); } };
 SFX.lvup = () => { [523, 784, 1047, 1319].forEach((f, i) => tone(f, .1, 'square', .08, 0, i * .05)); };
 
+// 効果音の鳴らしすぎ防止（iPhoneで音の部品を作りすぎると落ちるため）
+(() => {
+  const MIN = { shotK: .12, shot: .12, crack: .1, hit: .12, pop: .06, coin: .06, pon: .08, boo: .25, correct: .2, charge: .2, lvup: .3, shield: .2 };
+  const last = {}; let win = 0, cnt = 0;
+  for (const k of Object.keys(SFX)) {
+    const f = SFX[k], gap = MIN[k] || .05;
+    SFX[k] = (...a) => {
+      const t = performance.now() / 1000;
+      if (last[k] && t - last[k] < gap) return;
+      if (t - win > .25) { win = t; cnt = 0; }
+      if (++cnt > 6 && !['correct', 'boo', 'fanfare', 'roar', 'lose', 'fever', 'click'].includes(k)) return;
+      last[k] = t; f(...a);
+    };
+  }
+})();
+
 // ================= 状態 =================
 const G = { mode: 'title', t: 0, run: null, paused: false, timers: [], parts: [], floats: [], shake: 0, flash: 0, flashC: '#fff' };
 function later(t, fn) { G.timers.push({ t, fn }); }
-const MAXD = 90;
+const MAXD = 50;
 const KINDS = [0, 1, 2, 3, 4, 5];
 function memberTarget(i) { if (i === 0) return { x: 0, z: 0 }; const r = .32 * Math.sqrt(i) + .12, a = i * 2.39996; return { x: r * Math.cos(a), z: r * Math.sin(a) * .75 }; }
 function crowdR(r) { return .32 * Math.sqrt(r.members.length) + .35; }
