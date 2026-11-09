@@ -578,7 +578,7 @@ function audioInit() {
   try {
     const AC = window.AudioContext || window.webkitAudioContext; AU.ctx = new AC();
     AU.master = AU.ctx.createGain(); AU.master.gain.value = save.sound ? .55 : 0; AU.master.connect(AU.ctx.destination);
-    AU.bgm = AU.ctx.createGain(); AU.bgm.gain.value = .32; AU.bgm.connect(AU.master);
+    AU.bgm = AU.ctx.createGain(); AU.bgm.gain.value = .55; AU.bgm.connect(AU.master);
     const len = AU.ctx.sampleRate * .5, buf = AU.ctx.createBuffer(1, len, AU.ctx.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     AU.noise = buf; AU.next = AU.ctx.currentTime + .1;
@@ -625,7 +625,40 @@ function playStep(step, t) {
   if (mode !== 'boss' || s % 2 === 0) schedTone(mtof(root + 12 + ch[s % 4] + (fever ? 12 : 0)), t, .12, 'triangle', fever ? .07 : .045);
   if (mode === 'boss' && (s === 0 || s === 6 || s === 10)) schedTone(mtof(root + 24 + ch[(bar + s) % 3]), t, .25, 'square', .03);
 }
-function bgmMode(m) { AU.mode = m; AU.bpm = m === 'boss' ? 140 : m === 'calm' ? 100 : 128; }
+// BGM：最初に一度だけ 曲を作って、それをくり返し流す（音の部品を作り続けない）
+const BGM = { buf: {}, src: null, cur: null, making: {} };
+function makeBGM(mode) {
+  if (BGM.buf[mode] || BGM.making[mode] || !AU.ctx) return;
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!OAC) return;
+  BGM.making[mode] = 1;
+  const bpm = mode === 'boss' ? 140 : mode === 'calm' ? 96 : 124, st = 60 / bpm / 4, steps = 64, sr = 22050, len = Math.ceil(steps * st * sr);
+  const oc = new OAC(1, len, sr), out = oc.createGain(); out.gain.value = 1; out.connect(oc.destination);
+  const nb = oc.createBuffer(1, sr * .5, sr), nd = nb.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  const T = (f, t, d, type, v) => { const o = oc.createOscillator(), g = oc.createGain(); o.type = type; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(v, t + .01); g.gain.exponentialRampToValueAtTime(.0001, t + d); o.connect(g); g.connect(out); o.start(t); o.stop(t + d + .02); };
+  const N = (t, d, v, fq, hp) => { const s = oc.createBufferSource(); s.buffer = nb; const f = oc.createBiquadFilter(); f.type = hp ? 'highpass' : 'lowpass'; f.frequency.value = fq; const g = oc.createGain(); g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(.0001, t + d); s.connect(f); f.connect(g); g.connect(out); s.start(t); s.stop(t + d + .02); };
+  // ファンタジーらしい コード進行（ハープ風のアルペジオ＋ベース＋たいこ）
+  const P = mode === 'boss' ? [[45, 1], [41, 0], [43, 0], [40, 0]] : mode === 'calm' ? [[48, 0], [45, 1], [41, 0], [43, 0]] : [[50, 0], [47, 1], [43, 0], [45, 0]];
+  for (let s = 0; s < steps; s++) {
+    const t = s * st, b = (s / 16) | 0, ss = s % 16, [root, minor] = P[b], ch = minor ? [0, 3, 7, 12, 15] : [0, 4, 7, 12, 16];
+    const calm = mode === 'calm';
+    if (!calm && ss % 4 === 0) { const o = oc.createOscillator(), g = oc.createGain(); o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(42, t + .18); g.gain.setValueAtTime(.5, t); g.gain.exponentialRampToValueAtTime(.0001, t + .22); o.connect(g); g.connect(out); o.start(t); o.stop(t + .25); }
+    if (!calm && (ss === 4 || ss === 12)) N(t, .12, .16, 2200);
+    if (!calm && ss % 2 === 1) N(t, .03, .05, 7000, true);
+    if (ss % 4 === 0) T(mtof(root - 12), t, st * 3.6, 'triangle', .22);
+    T(mtof(root + 12 + ch[(ss * (mode === 'boss' ? 3 : 1)) % 5]), t, st * 2.2, 'triangle', calm ? .07 : .09);
+    if (ss === 0) for (const k of [0, 2]) T(mtof(root + ch[k]), t, st * 15, 'sine', .05);
+    if (mode === 'boss' && (ss === 0 || ss === 6 || ss === 10)) T(mtof(root + 24 + ch[(b + ss) % 3]), t, st * 2, 'square', .03);
+  }
+  oc.startRendering().then(buf => { BGM.buf[mode] = buf; BGM.making[mode] = 0; if (AU.mode === mode) playBGM(); }).catch(() => { BGM.making[mode] = 0; });
+}
+function playBGM() {
+  if (!AU.ctx) return;
+  if (BGM.src) { try { BGM.src.stop(); } catch (e) { } BGM.src = null; BGM.cur = null; }
+  if (!save.sound) return;
+  const buf = BGM.buf[AU.mode]; if (!buf) { makeBGM(AU.mode); return; }
+  const s = AU.ctx.createBufferSource(); s.buffer = buf; s.loop = true; s.connect(AU.bgm); s.start(); BGM.src = s; BGM.cur = AU.mode;
+}
+function bgmMode(m) { AU.mode = m; AU.bpm = m === 'boss' ? 140 : m === 'calm' ? 96 : 124; if (BGM.cur !== m || !BGM.src) playBGM(); }
 const SFX = {
   correct() { [523, 659, 784, 1047].forEach((f, i) => tone(f, .16, 'square', .1, 0, i * .06)); tone(1568, .3, 'triangle', .08, 0, .26); },
   wrong() { tone(220, .35, 'sawtooth', .16, 90); tone(160, .4, 'square', .08, 70, .05); },
@@ -1074,7 +1107,7 @@ function updWeapon(r) {
   if (r.superT > 0) { el.innerHTML = `⚔️ <b>せいけん</b>`; el.style.borderColor = '#fff0a0'; return; }
   const w = WEAP[r.wl]; el.innerHTML = `<span class="wlv">Lv${r.wl}</span> ${w.name}<span class="wbar">${'<i></i>'.repeat(r.wl)}${'<i class="e"></i>'.repeat(5 - r.wl)}</span>`; el.style.borderColor = w.col;
 }
-$('#btnPause').addEventListener('click', () => { if (!G.run || G.run.over) return; G.paused = true; SFX.click(); showScreen('pause'); });
+$('#btnPause').addEventListener('click', () => { if (!G.run || G.run.over) return; G.paused = true; SFX.click(); try { AU.ctx && AU.ctx.suspend(); } catch (e) { } showScreen('pause'); });
 
 // ================= 描画 =================
 function rr(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
@@ -1666,17 +1699,17 @@ let resetArm = false;
 const ACT = {
   nop() { SFX.boo(); },
   toTitle() { G.run = makeDemo(); showScreen('title'); },
-  toMap() { audioInit(); speechUnlock(); loadPack('common'); bgmMode('calm'); G.paused = false; G.timers = []; G.run = makeDemo(); view.thz = .28; view.tgr = .82; hideUI(); showScreen('map'); },
+  toMap() { audioInit(); speechUnlock(); loadPack('common'); setTimeout(() => { makeBGM('run'); setTimeout(() => makeBGM('boss'), 400); }, 300); bgmMode('calm'); G.paused = false; G.timers = []; G.run = makeDemo(); view.thz = .28; view.tgr = .82; hideUI(); showScreen('map'); },
   intro(arg) { audioInit(); speechUnlock(); const [wk, si] = arg.split(':'); loadPack('common'); loadPack(wk); G.intro = [wk, +si]; showScreen('intro'); },
   go() { startStage(G.intro[0], G.intro[1]); },
-  resume() { G.paused = false; hideScreen(); },
+  resume() { G.paused = false; try { AU.ctx && AU.ctx.resume(); } catch (e) { } hideScreen(); },
   retry() { G.paused = false; const r = G.run; startStage(r && !r.demo ? r.wk : G.intro[0], r && !r.demo ? r.si : G.intro[1]); },
   quit() { ACT.toMap(); },
   next() { const r = G.lastResult.r; G.intro = [r.wk, r.si + 1]; showScreen('intro'); },
   review() { showScreen('review'); const q = G.lastResult.r.wrongs[0]; if (q) speak(q.teachSay); },
   say(i) { const q = G.lastResult.r.wrongs[+i]; if (q) speak(q.teachSay, true); },
   reviewDone() { G.lastResult.reviewed = true; showScreen('result'); },
-  snd(_, b) { save.sound = !save.sound; persist(); if (AU.master) AU.master.gain.value = save.sound ? .55 : 0; b.textContent = save.sound ? '🔊 おと：オン' : '🔇 おと：オフ'; },
+  snd(_, b) { save.sound = !save.sound; persist(); if (AU.master) AU.master.gain.value = save.sound ? .55 : 0; playBGM(); b.textContent = save.sound ? '🔊 おと：オン' : '🔇 おと：オフ'; },
   voice(_, b) { save.voice = !save.voice; persist(); b.textContent = save.voice ? '🗣 よみあげ：オン' : '🤐 よみあげ：オフ'; if (save.voice) speak('よみあげ、 オン'); else try { speechSynthesis.cancel(); } catch (e) { } },
   settings() { pickVoice(); showScreen('settings'); const s = $('#vsel'); if (s) s.onchange = () => { save.voiceName = s.value; persist(); pickVoice(); speak('この こえで よむよ', true); }; },
   rate(v) { save.rate = +v; persist(); ACT.settings(); speak('この はやさで よむよ', true); },
